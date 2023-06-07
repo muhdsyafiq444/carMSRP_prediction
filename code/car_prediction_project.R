@@ -1,23 +1,35 @@
 
-setwd("E:/R")
-
 # Activation of necessary packages ----
 
 pacman::p_load(tidyverse, lubridate, janitor,
                tidymodels, bestNormalize,
                Hmisc, ggstatsplot, GGally, skimr, # for EDA
                tidymodels, bestNormalize, # Tidy ML
-               DT, plotly, # Interactive Data Display
+               DT, plotly, ggthemr, ggrepel, # Interactive Data Display
                vip, # Feature Importance
                broom, jtools, interactions, # report models
                themis, foreach,
                xgboost, ranger, kernlab, finetune) # setting your dependencies
 
+install.packages("devtools")
+devtools::install_github('Mikata-Project/ggthemr')
 sessionInfo()
+
+setwd("I:/R")
+
+drive_download("~/R_data_portfolio/car_prediction/car_finalized.RData",
+               overwrite = TRUE)
 
 load("car_finalized.RData")
 
 # IMPORT ----
+
+install.packages("ggrepel")
+
+library(googledrive)
+
+drive_download("~/R_data_portfolio/car_prediction/Car_price_prediction.csv",
+  overwrite = TRUE)
 
 car <- read_csv("Car_price_prediction.csv")
 
@@ -58,10 +70,17 @@ car %>%
 car_cleaned <- 
   car %>% 
   clean_names() %>% 
+  dplyr::distinct() %>% 
   mutate(log10_MSRP = log10(msrp)
          ) %>% 
   mutate_if(is.character, factor) %>% 
   select(-msrp)
+
+dup_car_cleaned <- 
+  car_cleaned %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
 
 car_cleaned  %>% 
   skim()
@@ -78,8 +97,6 @@ car_eda <-
                    number_of_doors) %>% 
   step_YeoJohnson(all_numeric_predictors()
               ) %>%
-  step_orderNorm(all_numeric_predictors()
-                 ) %>%
   step_normalize(all_numeric_predictors()
                  ) %>%
   step_dummy(all_nominal_predictors()
@@ -113,6 +130,27 @@ car_corr_mat <-
   arrange(desc(absCORR)
           ) %>% 
   datatable()
+
+car_cleaned %>% 
+  ggplot(aes(x = 	highway_mpg,
+             y = log10_MSRP)
+         ) + 
+  geom_point(color = "dodgerblue",
+             alpha = 0.25) +
+  geom_smooth(method = "lm",
+              formula = y ~ x,
+              se = F,
+              color = "red") + 
+  geom_smooth(method = "lm",
+              formula = y ~ poly(x,
+                                 degree = 3),
+              se = F,
+              color = "green") + 
+  geom_smooth(method = "loess", # LOESS for EDA
+              formula = y ~ x,
+              se = F,
+              color = "purple") + 
+  theme_bw()
 
 # PREDICTIVE MODEL ----
 
@@ -156,70 +194,7 @@ car_training %>%
 car_training %>% 
   skim()
 
-recipe_imputemean_yeo <- 
-  recipe(formula = log10_MSRP ~ ., 
-         data = car_training) %>%
-  update_role(model, new_role = "id variable") %>% 
-  step_zv(all_numeric_predictors()
-          ) %>%
-  step_unknown(engine_fuel_type, 
-               new_level = "unknown") %>% 
-  step_impute_mean(engine_cylinders, engine_hp,
-                   number_of_doors) %>% 
-  step_YeoJohnson(all_numeric_predictors()
-                  ) %>%
-  step_normalize(all_numeric_predictors()
-                 ) %>%
-  step_dummy(all_nominal_predictors()
-             )
-
-recipe_imputemean_yeo %>% 
-  prep(verbose = T)
-
-recipe_imputeknn_yeo <- 
-  recipe(formula = log10_MSRP ~ ., 
-         data = car_training) %>%
-  update_role(model, new_role = "id variable") %>% 
-  step_zv(all_numeric_predictors()
-          ) %>%
-  step_unknown(engine_fuel_type, 
-               new_level = "unknown") %>% 
-  step_impute_knn(engine_cylinders, engine_hp,
-                   number_of_doors) %>% 
-  step_YeoJohnson(all_numeric_predictors()
-                  ) %>%
-  step_normalize(all_numeric_predictors()
-                 ) %>%
-  step_dummy(all_nominal_predictors()
-             )
-
-recipe_imputeknn_yeo %>% 
-  prep(verbose = T)
-
-recipe_imputeknn_pca <- 
-  recipe(formula = log10_MSRP ~ ., 
-         data = car_training) %>%
-  update_role(model, new_role = "id variable") %>% 
-  step_zv(all_numeric_predictors()
-          ) %>% 
-  step_unknown(engine_fuel_type, 
-               new_level = "unknown") %>% 
-  step_impute_knn(engine_cylinders, engine_hp,
-                  number_of_doors) %>% 
-  step_YeoJohnson(all_numeric_predictors()
-                  ) %>%
-  step_normalize(all_numeric_predictors()
-                 ) %>% 
-  step_pca(all_numeric_predictors(),
-           num_comp = 2
-           ) %>% 
-  step_dummy(all_nominal_predictors()
-             ) 
-
-recipe_imputeknn_pca %>% 
-  prep(verbose = T)
-
-recipe_imputemean_interact1 <- 
+recipe_imputemean_poly <- 
   recipe(formula = log10_MSRP ~ ., 
          data = car_training) %>%
   update_role(model, new_role = "id variable") %>% 
@@ -235,22 +210,18 @@ recipe_imputemean_interact1 <-
                  ) %>% 
   step_dummy(all_nominal_predictors()
              ) %>% 
-  step_interact(terms = ~ city_mpg:engine_cylinders
-                )
-  # step_interact(terms = ~ city_mpg:highway_mpg) %>% 
-  # step_interact(terms = ~ city_mpg:engine_cylinders)
-# step_interact(terms = ~ transmission_type:engine_fuel_type
-# )
+  step_poly(engine_hp, 
+            degree = 2)
 
-recipe_imputemean_interact1 %>% 
+recipe_imputemean_poly %>% 
   prep(verbose = T)
 
-recipe_imputemean_interact2 <- 
+recipe_imputemean_interact <- 
   recipe(formula = log10_MSRP ~ ., 
          data = car_training) %>%
   update_role(model, new_role = "id variable") %>% 
   step_zv(all_numeric_predictors()
-  ) %>% 
+          ) %>% 
   step_unknown(engine_fuel_type, 
                new_level = "unknown") %>% 
   step_impute_mean(engine_cylinders, engine_hp,
@@ -261,15 +232,39 @@ recipe_imputemean_interact2 <-
                  ) %>% 
   step_dummy(all_nominal_predictors()
              ) %>% 
-  step_interact(terms = ~ city_mpg:engine_cylinders
-                ) %>% 
-  step_interact(terms = ~ city_mpg:highway_mpg
-                ) %>% 
-  step_interact(terms = ~ highway_mpg:engine_cylinders
+  step_interact(terms = ~ engine_hp:engine_cylinders:year
                 )
 
-recipe_imputemean_interact2 %>% 
+recipe_imputemean_interact %>% 
   prep(verbose = T)
+
+recipe_imputemean_interactpoly <- 
+  recipe(formula = log10_MSRP ~ ., 
+         data = car_training) %>%
+  update_role(model, new_role = "id variable") %>% 
+  step_zv(all_numeric_predictors()
+          ) %>% 
+  step_unknown(engine_fuel_type, 
+               new_level = "unknown") %>% 
+  step_impute_mean(engine_cylinders, engine_hp,
+                   number_of_doors) %>% 
+  step_YeoJohnson(all_numeric_predictors()
+                  ) %>%
+  step_normalize(all_numeric_predictors()
+                 ) %>% 
+  step_dummy(all_nominal_predictors()
+             ) %>% 
+  step_interact(terms = ~ ends_with("mpg"):engine_cylinders
+                ) %>% 
+  step_poly(engine_hp, 
+            degree = 3) %>% 
+  step_poly(year, 
+            degree = 3)
+
+recipe_imputemean_interactpoly %>% 
+  prep(verbose = T) %>% 
+  bake(new_data = NULL) %>% 
+  skim()
 
 ## Step 3: FIT ----
 
@@ -321,7 +316,7 @@ xgb_grid <- grid_max_entropy(
   sample_size = sample_prop(),
   learn_rate(),
   loss_reduction(),
-  size = 10
+  size = 20
   )
 
 rf_param <- 
@@ -338,34 +333,34 @@ rf_grid <- grid_latin_hypercube(
   trees(),
   finalize(mtry(), car_training),
   min_n(),
-  size = 10
+  size = 20
   )
 
 model_metrics <- metric_set(rmse, rsq, mae)
 
 
 all_workflows <-
-  workflow_set(preproc = list(imputemean_interact1 =
-                                recipe_imputemean_interact1,
-                              # imputeknn_yeo = 
-                              #   recipe_imputeknn_yeo,
-                              # imputeknn_yeo_pca =
-                              #   recipe_imputeknn_pca,
-                              imputemean_interact2 =
-                                recipe_imputemean_interact2
+  workflow_set(preproc = list(imputemean_interactpoly =
+                                recipe_imputemean_interactpoly
+                              # imputemean_poly =
+                              #   recipe_imputemean_poly,
+                              # # imputeknn_yeo_pca =
+                              # #   recipe_imputeknn_pca,
+                              # imputemean_interact =
+                              #   recipe_imputemean_interact
                               ),
   models = list(#random_forest = RF,
                 XGB = XG_BOOST)
   ) %>% 
   # option_add(grid = rf_grid
   #            ) %>%
-  option_add(grid = xgb_grid, id = "imputemean_interact1_XGB"
-             ) %>%
-  # option_add(grid = xgb_grid, id = "imputeknn_yeo_XGB"
-  #            ) %>% 
-  # option_add(grid = xgb_grid, id = "imputeknn_yeo_pca_XGB"
-  #            ) %>% 
-  option_add(grid = xgb_grid, id = "imputemean_interact2_XGB"
+  # option_add(grid = xgb_grid, id = "imputemean_interact_XGB"
+  #            ) %>%
+  # # # option_add(grid = xgb_grid, id = "imputeknn_yeo_XGB"
+  # # #            ) %>% 
+  # option_add(grid = xgb_grid, id = "imputemean_poly_XGB"
+  #            ) %>%
+  option_add(grid = xgb_grid, id = "imputemean_interactpoly_XGB"
              )
 
 #cl <- makeCluster(no_cores, type = "SOCK")#, setup_strategy = "sequential")
@@ -377,6 +372,8 @@ library(doParallel)
 cores <- detectCores()
 cl <- makeCluster(cores[1]-1)
 doParallel::registerDoParallel(cl)
+
+# doParallel::registerDoParallel()
 
 CONTROL_TOWER_ML <- 
   all_workflows %>% 
@@ -414,7 +411,7 @@ RANKINGS_cleaned <-
 
 RANKINGS_cleaned
 
-previous_run
+best_run <- RANKINGS_cleaned
 
 workflow_ID_best <-
   RANKINGS_cleaned %>% 
@@ -454,33 +451,33 @@ individual_countries_predictions <-
 
 individual_countries_predictions
 
-furniture_names <- 
-  furniture %>% 
+car_names <- 
+  car %>% 
   janitor::clean_names()
 
 ### Plotting Metrics ----
 
 for_naming <- 
-  furniture_names %>% 
+  car_names %>% 
   rowid_to_column(".row")
 
 data_for_plot <- 
   for_naming %>% 
   inner_join(individual_countries_predictions,
              by = ".row") %>% 
-  dplyr::select(.row, item_id, name, category, .pred, price) %>% 
-  rename(actual_price = price) %>% 
-  mutate(predicted_price = 10^.pred)
+  dplyr::select(.row, make, model, .pred, msrp) %>% 
+  rename(actual_msrp = msrp) %>% 
+  mutate(predicted_msrp = 10^.pred)
 
 ggthemr("dust")
 
-set.seed(220070261)
+set.seed(05062305)
 
 data_for_plot %>% 
-  ggplot(aes(x = actual_price,
-             y = predicted_price,
-             text = name,
-             label = item_id)
+  ggplot(aes(x = actual_msrp,
+             y = predicted_msrp,
+             text = make,
+             label = model)
   ) +
   geom_abline(color = "red",
               lty = 2) + 
@@ -489,17 +486,17 @@ data_for_plot %>%
   coord_obs_pred() + # note that this comes from tune::
   scale_x_continuous(labels = scales::dollar) + 
   scale_y_continuous(labels = scales::dollar) +
-  labs(x = "Actual Price of Furniture",
-       y = "Predicted Price of Furniture",
-       title = "Predicting IKEA Furniture Price",
+  labs(x = "Actual MSRP of Cars",
+       y = "Predicted MSRP of Cars",
+       title = "Predicting Car MSRP",
        subtitle = "Currency = USD") 
 
 for_plotly <- 
   data_for_plot %>% 
-  ggplot(aes(x = actual_price,
-             y = predicted_price,
-             text = name,
-             label = category)
+  ggplot(aes(x = actual_msrp,
+             y = predicted_msrp,
+             text = make,
+             label = model)
   ) +
   geom_abline(color = "red",
               lty = 2) + 
@@ -508,9 +505,9 @@ for_plotly <-
   # coord_obs_pred() + # note that this comes from tune::
   scale_x_continuous(labels = scales::dollar) + 
   scale_y_continuous(labels = scales::dollar) +
-  labs(x = "Actual Price of Furniture",
-       y = "Predicted Price of Furniture",
-       title = "Predicting IKEA Furniture Price",
+  labs(x = "Actual MSRP of Cars",
+       y = "Predicted MSRP of Cars",
+       title = "Predicting Car MSRP",
        subtitle = "Currency = USD") 
 
 for_plotly %>% 
@@ -528,40 +525,40 @@ importance <-
 
 model_summary_for_importance <- 
   workflow() %>% 
-  add_recipe(recipe_knn_impute_interact_3) %>% 
+  add_recipe(recipe_imputemean_interactpoly) %>% 
   add_model(importance) %>% # UPDATED here
-  fit(analysis(furniture_validate$splits[[1]]
-  )
-  ) %>% 
+  fit(analysis(car_validate$splits[[1]]
+               )
+      ) %>% 
   extract_fit_parsnip() %>% 
   vip::vip(aesthetics = list(fill = "deepskyblue3",
                              alpha = 0.75)
-  )
+           )
 
 model_summary_for_importance 
 
 # Finalized Model ----
 
 finalized_xgb <- 
-  boost_tree(trees = 1000,
-             mtry = 28,
-             min_n = 14,
-             tree_depth = 11,
-             sample_size = 0.564700039247982,
-             learn_rate = 0.0462100793562759
-  ) %>% 
+  boost_tree(trees = 1346,
+             mtry = 15,
+             min_n = 35,
+             tree_depth = 7,
+             sample_size = 0.827604670915753,
+             learn_rate = 0.0728621988626886
+             ) %>% 
   set_engine("xgboost") %>% 
   set_mode("regression")
 
 finalized_model <- 
   workflow() %>% 
-  add_recipe(recipe_knn_impute_interact_3) %>%
+  add_recipe(recipe_imputemean_interactpoly) %>%
   add_model(finalized_xgb) %>% 
-  fit(furniture_cleaned)
+  fit(car_cleaned)
 
 # Store Your Algorithm ----
 finalized_model %>% 
-  saveRDS("furniture_finalized_model.rds")
+  saveRDS("car_finalized_model.rds")
 
 # Store Your RAM Space ----
 save.image("car_finalized.RData")
